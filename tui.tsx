@@ -10,7 +10,9 @@ import {
   fmt,
   fmtCost,
   GO_PROVIDER,
+  isAssistant,
   modelId,
+  parseUsage,
   providerId,
   providerLabel,
   providerTitle,
@@ -80,7 +82,7 @@ function providerTotals(context: any, providerID: string, sessionID?: string): G
     const messages = context.data.session.message.list(sessionID) ?? []
     for (const entry of messages) {
       const m = unwrap(entry)
-      if (m?.role !== "assistant") continue
+      if (!isAssistant(m)) continue
       const provider = providerId(m)
       if (provider !== providerID) continue
       const tokens = m?.tokens ?? {}
@@ -188,7 +190,7 @@ function providerUsage(context: any, providerID: string): FreeModelUsage {
           const pmodel = String(part?.error?.modelID ?? part?.modelID ?? model)
           if (untilMs) cooldowns[pmodel] = Math.max(cooldowns[pmodel] ?? 0, untilMs)
         }
-        if (m?.role !== "assistant" || providerId(m) !== providerID) continue
+        if (!isAssistant(m) || providerId(m) !== providerID) continue
         if (providerID === ZEN_PROVIDER && !isFreeModel(model)) continue
         const tokens = m?.tokens ?? {}
         const total =
@@ -231,10 +233,16 @@ async function fetchUsage(): Promise<void> {
       try {
         const res = await fetch(USAGE_URL, { headers: { Authorization: `Bearer ${key}` } })
         if (res.ok) {
-          cachedUsage = (await res.json()) as GoUsage
-          lastSuccess = Date.now()
-          lastFetch = lastSuccess
-          persist?.(cachedUsage)
+          // Parse, don't cast: an unrecognized shape degrades to the last
+          // known-good cache instead of poisoning it.
+          const parsed = parseUsage(await res.json())
+          if (parsed) {
+            cachedUsage = parsed
+            lastSuccess = Date.now()
+            lastFetch = lastSuccess
+            persist?.(cachedUsage)
+            return
+          }
           return
         }
       } catch {
@@ -480,7 +488,7 @@ export default Plugin.define({
         const messages = context.data.session.message.list(sessionID) ?? []
         for (let i = messages.length - 1; i >= 0; i--) {
           const m = (messages[i] as any)?.info ?? messages[i]
-          if (m?.role !== "assistant") continue
+          if (!isAssistant(m)) continue
           return String(m?.model?.providerID ?? m?.providerID ?? "") || null
         }
       } catch {
