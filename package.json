@@ -1,0 +1,33 @@
+{
+  "name": "opencode-go-usage",
+  "version": "0.1.0",
+  "description": "Live Go provider quota usage (tokens and cost) in the OpenCode sidebar footer.",
+  "license": "MIT",
+  "author": "Ranjith Raj",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./tui": "./tui.tsx"
+  },
+  "files": [
+    "src",
+    "index.ts",
+    "tui.tsx"
+  ],
+  "peerDependencies": {
+    "@opentui/core": "^0.5.10",
+    "@opentui/solid": "^0.5.10",
+    "solid-js": "^1.9.12"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "usage",
+    "tokens",
+    "cost"
+  ],
+  "dependencies": {
+    "@opencode-ai/plugin": "beta"
+  }
+}
