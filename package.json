@@ -1,8 +1,8 @@
 {
-  "name": "opencode-go-usage",
+  "name": "opencode-usage-quota-tracker",
   "version": "0.1.0",
-  "description": "Live OpenCode Zen/Go plan quota (tokens, cost, 5h/1w/1mo windows) in the sidebar footer.",
-  "license": "MIT",
+  "description": "Live provider quota and usage tracker (tokens, cost, 5h/1w/1mo windows) for OpenCode plans, in the sidebar footer.",
+  "license": "AGPL-3.0",
   "author": "Ranjith Raj",
   "type": "module",
   "main": "./index.ts",
@@ -12,6 +12,7 @@
   },
   "files": [
     "src",
+    "shared",
     "index.ts",
     "tui.tsx"
   ],
@@ -29,5 +30,15 @@
   ],
   "dependencies": {
     "@opencode-ai/plugin": "beta"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^17.5.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "typecheck": "tsc --noEmit"
   }
 }
