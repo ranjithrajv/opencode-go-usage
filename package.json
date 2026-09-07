@@ -12,7 +12,6 @@
   },
   "files": [
     "src",
-    "shared",
     "index.ts",
     "tui.tsx"
   ],
@@ -29,7 +28,8 @@
     "cost"
   ],
   "dependencies": {
-    "@opencode-ai/plugin": "beta"
+    "@opencode-ai/plugin": "beta",
+    "opencode-plugin-kit": "file:../opencode-plugin-kit"
   },
   "devDependencies": {
     "husky": "^9.1.7",

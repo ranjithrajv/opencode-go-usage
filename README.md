@@ -1,6 +1,6 @@
 # opencode-usage-quota-tracker
 
-Track live provider quota and usage in [OpenCode](https://opencode.ai) V2 — currently Zen (`opencode`) and Go (`opencode-go`), extensible to other providers.
+Track live provider quota and usage in [OpenCode](https://opencode.ai) V2 — currently Zen (`opencode`) and Go (`opencode-go`), extensible to other providers. Shares its sidebar building blocks with [opencode-plugin-kit](../opencode-plugin-kit).
 
 - A **sidebar footer** widget in the TUI shows the current session's token and cost usage, live.
 - Quota rows for the 5h / 1w / 1mo windows of your workspace plan, with lean progress bars and reset countdowns.

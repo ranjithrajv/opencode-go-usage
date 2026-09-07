@@ -1,11 +1,20 @@
 import { Plugin } from "@opencode-ai/plugin/tui"
-import { createSignal } from "solid-js"
 import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { ZEN_PROVIDER, GO_PROVIDER, unwrap, providerId, modelId } from "./shared/providers.ts"
-import { fmt, fmtCost, until } from "./shared/format.ts"
-import { bar } from "./shared/rows.ts"
+import {
+  asArray,
+  bar,
+  createViewPicker,
+  fmt,
+  fmtCost,
+  GO_PROVIDER,
+  modelId,
+  providerId,
+  until,
+  unwrap,
+  ZEN_PROVIDER,
+} from "opencode-plugin-kit"
 
 // This plugin shows provider quota and usage for the OpenCode workspace
 // (Zen/Go today; designed to extend to other providers).
@@ -430,12 +439,6 @@ export default Plugin.define({
       },
     ]
 
-    const [view, setView] = createSignal<ViewID>("go")
-    // Auto-pick: the active view must be available (its provider key is
-    // added). If the user's persisted/active view lost its key — or no
-    // explicit pick has been made and only one provider is connected — fall
-    // back to the first available view. Computed, never set during render,
-    // so reactivity stays clean; manual picks via /usage-view still win.
     // Provider the current session is actually using: the provider of the
     // most recent assistant message. Defensive reads; beta API.
     const sessionProvider = (sessionID?: string): string | null => {
@@ -461,116 +464,34 @@ export default Plugin.define({
     // Computed, never set during render, so reactivity stays clean.
     const effectiveView = (sessionID?: string): ViewID => {
       const available = availableViews()
-      if (available.length === 0) return view()
+      if (available.length === 0) return "go"
       const used = sessionProvider(sessionID)
       const usedView = used ? available.find((v) => v.providerID === used) : undefined
-      return (usedView?.id ?? (available.some((v) => v.id === view()) ? view() : available[0].id)) as ViewID
-    }
-    const applyView = (next: ViewID) => {
-      if (next === view()) return
-      setView(next)
-      try {
-        const [viewStore] = context.storage.store("view", { initial: { view: "go" as ViewID } })
-        viewStore.view = next
-      } catch {
-        // In-memory only.
-      }
-      try {
-        context.ui.toast.show({
-          message: `Usage footer: ${VIEWS.find((v) => v.id === next)?.title ?? next} view`,
-          variant: "success",
-        })
-      } catch {
-        // Toast unavailable; the footer still re-renders.
-      }
-    }
-    try {
-      const [viewStore] = context.storage.store("view", { initial: { view: "go" as ViewID } })
-      if (VIEWS.some((v) => v.id === viewStore.view)) setView(viewStore.view)
-    } catch {
-      // In-memory only.
+      const persisted = VIEWS.find((v) => v.id === picker.currentID())
+      return (usedView ?? (available.includes(persisted!) ? persisted : undefined) ?? available[0]).id as ViewID
     }
     const currentView = (sessionID?: string) => VIEWS.find((v) => v.id === effectiveView(sessionID))!
 
-    // Opens a picker over the *available* views (provider key added); a
-    // non-empty argument selects that view directly (e.g. `/usage-view zen`).
-    const pickView = async (arg?: string) => {
-      const wanted = arg?.trim().toLowerCase()
-      const available = availableViews()
-      if (wanted) {
-        const match = VIEWS.find((v) => v.id === wanted || v.title.toLowerCase() === wanted)
-        if (match) {
-          if (available.includes(match)) return applyView(match.id)
-          try {
-            await context.ui.dialog.alert({
-              title: "Usage view",
-              message: `${match.title} has no API key added. Run /connect to add it first.`,
-            })
-          } catch {
-            // Dialog unavailable.
-          }
-          return
-        }
-        try {
-          await context.ui.dialog.alert({
-            title: "Usage view",
-            message: `Unknown view "${arg}". Available: ${available.map((v) => v.id).join(", ") || "none (no provider keys added)"}`,
-          })
-        } catch {
-          // Dialog unavailable.
-        }
-        return
-      }
-      try {
-        const selected = await context.ui.dialog.select({
-          title: "Usage view",
-          message: "Choose the provider view shown in the sidebar footer",
-          current: effectiveView(),
-          options: available.map((v) => ({
-            title: v.title,
-            value: v.id,
-            description: v.description,
-            disabled: false,
-          })),
-        })
-        if (selected) applyView(selected)
-      } catch {
-        // Dialog unavailable.
-      }
-    }
-
-    // Keymap layers are owned by the calling component, so the /usage-view
-    // command is registered from a rendered slot (an empty `app` contribution)
-    // rather than from setup() — a layer registered directly in setup() never
-    // becomes active.
-    context.ui.slot({
-      append: "app",
-      render: () => {
-        try {
-          context.keymap.layer(() => ({
-            mode: "global",
-            priority: 10,
-            commands: [
-              {
-                id: "usage.view",
-                title: `Usage footer: view provider (${currentView().title})`,
-                description: "Pick which provider's usage the sidebar footer shows",
-                group: "Usage",
-                palette: true,
-                slash: { name: "usage-view", aliases: ["usage"], arguments: true },
-                suggested: true,
-                run: (input?: string) => {
-                  void pickView(input)
-                },
-              },
-            ],
-          }))
-        } catch (err) {
-          console.warn("opencode-usage-quota-tracker: keymap.layer unavailable", err)
-        }
-        return null
+    // Picker (registry + persistence + /usage-view command + dialog + toast).
+    // A view is selectable only when its provider key is added; a non-empty
+    // argument selects that view directly (e.g. `/usage-view zen`).
+    const picker = createViewPicker(context, {
+      registry: VIEWS,
+      storageKey: "view",
+      command: {
+        id: "usage.view",
+        group: "Usage",
+        name: "usage-view",
+        aliases: ["usage"],
+        title: () => `Usage footer: view provider (${currentView().title})`,
+        description: "Pick which provider's usage the sidebar footer shows",
       },
+      dialog: { title: "Usage view", message: "Choose the provider view shown in the sidebar footer" },
+      toastPrefix: "Usage footer",
+      selectable: (v) => availableViews().includes(v),
+      unavailableMessage: (v) => `${v.title} has no API key added. Run /connect to add it first.`,
     })
+    picker.registerCommand()
 
     const slot = context.ui.slot({
       replace: "sidebar.footer",
