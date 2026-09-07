@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-// This plugin focuses on Go provider quota usage only.
+// This plugin shows Go plan quota usage for the OpenCode Zen/Go workspace.
 const GO_PROVIDER = "opencode-go"
 const USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 const POLL_MS = 60_000
@@ -45,6 +45,21 @@ function apiKey(): string {
     return String(auth?.[GO_PROVIDER]?.key ?? "")
   } catch {
     return ""
+  }
+}
+
+// The usage endpoint accepts any workspace key. Try the Zen (opencode)
+// provider key first, then fall back to the Go provider key, so the widget
+// also works for users who only have a Zen key.
+function apiKeys(): string[] {
+  try {
+    const auth = JSON.parse(readFileSync(join(homedir(), ".local/share/opencode/auth.json"), "utf8"))
+    const keys = [auth?.opencode?.key, auth?.[GO_PROVIDER]?.key]
+      .map((k) => String(k ?? "").trim())
+      .filter(Boolean)
+    return keys.length > 0 ? keys : [apiKey()]
+  } catch {
+    return apiKey() ? [apiKey()] : []
   }
 }
 
@@ -93,19 +108,24 @@ let inFlight = false
 let persist: ((usage: GoUsage) => void) | null = null
 
 async function fetchUsage(): Promise<void> {
-  const key = apiKey()
-  if (!key || inFlight) return
+  const keys = apiKeys()
+  if (keys.length === 0 || inFlight) return
   inFlight = true
   try {
-    const res = await fetch(USAGE_URL, { headers: { Authorization: `Bearer ${key}` } })
-    if (res.ok) {
-      cachedUsage = (await res.json()) as GoUsage
-      lastSuccess = Date.now()
-      lastFetch = lastSuccess
-      persist?.(cachedUsage)
+    for (const key of keys) {
+      try {
+        const res = await fetch(USAGE_URL, { headers: { Authorization: `Bearer ${key}` } })
+        if (res.ok) {
+          cachedUsage = (await res.json()) as GoUsage
+          lastSuccess = Date.now()
+          lastFetch = lastSuccess
+          persist?.(cachedUsage)
+          return
+        }
+      } catch {
+        // Try the next key; keep the last known usage on total failure.
+      }
     }
-  } catch {
-    // Keep the last known usage; render() reports staleness.
   } finally {
     inFlight = false
   }
@@ -157,8 +177,8 @@ export default Plugin.define({
       render: ({ sessionID }: { sessionID?: string }) => {
         refreshUsage()
 
-        // No Go key configured: render nothing instead of dead weight.
-        if (!apiKey()) return null
+        // No workspace key configured: render nothing instead of dead weight.
+        if (apiKeys().length === 0) return null
 
         const t = goTotals(context, sessionID)
         const goModel = t.input + t.output > 0 || t.cost > 0

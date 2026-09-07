@@ -3,13 +3,16 @@
 Track live Go provider (`opencode-go`) quota usage in [OpenCode](https://opencode.ai) V2.
 
 - A **sidebar footer** widget in the TUI shows the current session's token and cost usage, live.
+- Quota rows for the 5h / 1w / 1mo windows of your Zen/Go workspace, with lean progress bars and reset countdowns.
+
+It works with either a **Zen** (`opencode`) or a **Go** (`opencode-go`) API key — both authenticate against the same workspace usage endpoint.
 
 It only renders into the `sidebar.footer` slot — it never modifies sidebar content and never injects messages into sessions.
 
 ## Prerequisites
 
 - OpenCode **V2** (plugin API is beta)
-- A **Go plan** (`opencode-go`) API key: run `opencode2 auth login` and pick `opencode-go`. Without it the widget shows `quota —`.
+- A **Zen** (`opencode`) or **Go** (`opencode-go`) API key: run `opencode2 auth login`. Without one the widget renders nothing.
 
 ## Install
 

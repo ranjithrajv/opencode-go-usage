@@ -1,7 +1,7 @@
 {
   "name": "opencode-go-usage",
   "version": "0.1.0",
-  "description": "Live Go provider quota usage (tokens and cost) in the OpenCode sidebar footer.",
+  "description": "Live OpenCode Zen/Go plan quota (tokens, cost, 5h/1w/1mo windows) in the sidebar footer.",
   "license": "MIT",
   "author": "Ranjith Raj",
   "type": "module",
