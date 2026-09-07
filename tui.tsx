@@ -360,8 +360,6 @@ export default Plugin.define({
     // the client is unavailable), fall back to reading auth.json directly.
     let connectedProviders: Set<string> | null = null
     const connectedFromAuth = (providerID: string): boolean => {
-      // HuggingFace authenticates via HF_TOKEN env, not auth.json.
-      if (providerID === "huggingface" && process.env.HF_TOKEN) return true
       try {
         const auth = JSON.parse(readFileSync(join(homedir(), ".local/share/opencode/auth.json"), "utf8"))
         return Boolean(String(auth?.[providerID]?.key ?? "").trim())
@@ -369,8 +367,12 @@ export default Plugin.define({
         return false
       }
     }
-    const hasKey = (providerID: string): boolean =>
-      connectedProviders ? connectedProviders.has(providerID) : connectedFromAuth(providerID)
+    // HuggingFace authenticates via HF_TOKEN env, never auth.json or the
+    // integration list — treat it as connected whenever the env var is set.
+    const hasKey = (providerID: string): boolean => {
+      if (providerID === "huggingface" && process.env.HF_TOKEN) return true
+      return connectedProviders ? connectedProviders.has(providerID) : connectedFromAuth(providerID)
+    }
     const availableViews = () => VIEWS.filter((v) => hasKey(v.providerID))
     async function refreshConnections(): Promise<void> {
       try {
