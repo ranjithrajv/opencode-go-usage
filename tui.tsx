@@ -4,6 +4,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import {
   asArray,
+  availableProviders,
   bar,
   createViewPicker,
   fmt,
@@ -11,13 +12,16 @@ import {
   GO_PROVIDER,
   modelId,
   providerId,
+  providerLabel,
+  providerTitle,
   until,
   unwrap,
   ZEN_PROVIDER,
 } from "opencode-plugin-kit"
 
 // This plugin shows provider quota and usage for the OpenCode workspace
-// (Zen/Go today; designed to extend to other providers).
+// (go/zen plan quota; usage + model breakdown for every authenticated
+// provider via local message history).
 const USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 const POLL_MS = 60_000
 const STALE_AFTER_MS = 2 * POLL_MS
@@ -112,7 +116,7 @@ interface FreeModelUsage {
   cooldowns: Record<string, number> // model id -> epoch ms when the window frees up
 }
 
-let freeCache: { at: number; value: FreeModelUsage } | null = null
+let providerUsageCache: { at: number; value: Record<string, FreeModelUsage> } | null = null
 
 // Extract a retry/cooldown epoch from a limit-error payload. The Zen API is
 // the only place per-model free limits surface; the TUI persists those
@@ -134,12 +138,16 @@ function parseCooldown(text: string): number | null {
   return null
 }
 
-// Sum tokens per free model over the rolling 5h window, the current UTC
-// week (Mon 00:00, matching the server's weekly window), and the current
-// calendar month. Walks every cached session; throttled because it is
-// O(sessions × messages).
-function freeUsage(context: any): FreeModelUsage {
-  if (freeCache && Date.now() - freeCache.at < 30_000) return freeCache.value
+// Sum tokens per model over the rolling 5h window, the current UTC week
+// (Mon 00:00, matching the server's weekly window), and the current calendar
+// month, scoped to one provider's assistant messages. The zen view tracks
+// free-tier models; other providers track all of their models. Walks every
+// cached session; throttled because it is O(sessions × messages). Local
+// estimate only — the server keeps no per-provider quota API outside the
+// go/zen plan endpoint.
+function providerUsage(context: any, providerID: string): FreeModelUsage {
+  const cached = providerUsageCache?.value[providerID]
+  if (providerUsageCache && Date.now() - providerUsageCache.at < 30_000 && cached) return cached
   const totals: FreeWindows = { h5: 0, week: 0, month: 0 }
   const byModel: Record<string, FreeWindows> = {}
   const cooldowns: Record<string, number> = {}
@@ -180,7 +188,8 @@ function freeUsage(context: any): FreeModelUsage {
           const pmodel = String(part?.error?.modelID ?? part?.modelID ?? model)
           if (untilMs) cooldowns[pmodel] = Math.max(cooldowns[pmodel] ?? 0, untilMs)
         }
-        if (m?.role !== "assistant" || !isFreeModel(model)) continue
+        if (m?.role !== "assistant" || providerId(m) !== providerID) continue
+        if (providerID === ZEN_PROVIDER && !isFreeModel(model)) continue
         const tokens = m?.tokens ?? {}
         const total =
           (Number(tokens?.input ?? 0) || 0) +
@@ -196,7 +205,10 @@ function freeUsage(context: any): FreeModelUsage {
   } catch {
     // Keep whatever was accumulated.
   }
-  freeCache = { at: Date.now(), value: { totals, byModel, cooldowns } }
+  providerUsageCache = {
+    at: Date.now(),
+    value: { ...providerUsageCache?.value, [providerID]: { totals, byModel, cooldowns } },
+  }
   return { totals, byModel, cooldowns }
 }
 
@@ -331,7 +343,7 @@ export default Plugin.define({
     // here — the picker, slash command, persistence, and footer renderer all
     // derive from the registry. The active view is persisted across restarts
     // and held in a signal so switching re-renders the footer.
-    type ViewID = "go" | "zen"
+    type ViewID = string
     interface ProviderView {
       readonly id: ViewID
       readonly title: string
@@ -348,6 +360,8 @@ export default Plugin.define({
     // the client is unavailable), fall back to reading auth.json directly.
     let connectedProviders: Set<string> | null = null
     const connectedFromAuth = (providerID: string): boolean => {
+      // HuggingFace authenticates via HF_TOKEN env, not auth.json.
+      if (providerID === "huggingface" && process.env.HF_TOKEN) return true
       try {
         const auth = JSON.parse(readFileSync(join(homedir(), ".local/share/opencode/auth.json"), "utf8"))
         return Boolean(String(auth?.[providerID]?.key ?? "").trim())
@@ -401,43 +415,60 @@ export default Plugin.define({
       return rows
     }
 
-    const VIEWS: ProviderView[] = [
-      {
-        id: "go",
-        title: "Go",
-        description: "Go plan usage line and quota windows",
-        providerID: GO_PROVIDER,
-        rows: (sessionID) => [{ kind: "usage", label: "go", providerID: GO_PROVIDER }, ...planQuotaRows()],
-      },
-      {
-        id: "zen",
-        title: "Zen",
-        description: "Zen usage and free-tier breakdown (no plan quota)",
-        providerID: ZEN_PROVIDER,
-        rows: (sessionID) => {
-          // Free-tier pace is a local estimate; the server keeps no
-          // free-quota API, so these rows carry token values without bars.
-          const fw = freeUsage(context)
-          const freeRows: Row[] = [
-            { kind: "window", label: "free 5h", value: `${fmt(fw.totals.h5)} tok` },
-            { kind: "window", label: "free 1w", value: `${fmt(fw.totals.week)} tok` },
-            { kind: "window", label: "free 1mo", value: `${fmt(fw.totals.month)} tok` },
-          ]
-          // Per-model breakdown: models active in the 5h window, with any
-          // known cooldown countdown appended. Server limits are not
-          // queryable, so the cooldown only appears after a limit error.
-          const modelRows: Row[] = Object.entries(fw.byModel)
-            .filter(([id, w]) => w.h5 > 0 || (fw.cooldowns[id] ?? 0) > Date.now())
-            .sort((a, b) => b[1].h5 - a[1].h5)
-            .map(([id, w]) => {
-              const cd = fw.cooldowns[id]
-              const cdTxt = cd && cd > Date.now() ? ` ⏳${until(new Date(cd).toISOString())}` : ""
-              return { kind: "text", text: `${id} ${fmt(w.h5)}${cdTxt}` } as Row
-            })
-          return [{ kind: "usage", label: "zen", providerID: ZEN_PROVIDER }, ...freeRows, ...modelRows]
-        },
-      },
-    ]
+    // One view per authenticated provider (plus go's plan-quota rows and
+    // zen's free-tier breakdown). Built from the same discovery the picker
+    // and tool use, so new providers appear without edits. Go stays first —
+    // it was the original default view, so persisted picks keep matching.
+    const buildViews = (): ProviderView[] => {
+      const priority = new Map<string, number>([
+        [GO_PROVIDER, 0],
+        [ZEN_PROVIDER, 1],
+      ])
+      return availableProviders()
+        .map((pid): ProviderView => {
+          const label = providerLabel(pid)
+          if (pid === GO_PROVIDER) {
+            return {
+              id: label,
+              title: providerTitle(pid),
+              description: "Go plan usage line and quota windows",
+              providerID: pid,
+              rows: (sessionID) => [{ kind: "usage", label, providerID: pid }, ...planQuotaRows()],
+            }
+          }
+          // zen = free-tier breakdown; any other provider = its model usage.
+          const zenLike = pid === ZEN_PROVIDER
+          return {
+            id: label,
+            title: providerTitle(pid),
+            description: `${providerTitle(pid)} usage and model breakdown`,
+            providerID: pid,
+            rows: (sessionID) => {
+              const fw = providerUsage(context, pid)
+              const wl = (s: string) => (zenLike ? `free ${s}` : s)
+              const freeRows: Row[] = [
+                { kind: "window", label: wl("5h"), value: `${fmt(fw.totals.h5)} tok` },
+                { kind: "window", label: wl("1w"), value: `${fmt(fw.totals.week)} tok` },
+                { kind: "window", label: wl("1mo"), value: `${fmt(fw.totals.month)} tok` },
+              ]
+              // Per-model breakdown: models active in the 5h window, with any
+              // known cooldown countdown appended. Server limits are not
+              // queryable, so the cooldown only appears after a limit error.
+              const modelRows: Row[] = Object.entries(fw.byModel)
+                .filter(([id, w]) => w.h5 > 0 || (fw.cooldowns[id] ?? 0) > Date.now())
+                .sort((a, b) => b[1].h5 - a[1].h5)
+                .map(([id, w]) => {
+                  const cd = fw.cooldowns[id]
+                  const cdTxt = cd && cd > Date.now() ? ` ⏳${until(new Date(cd).toISOString())}` : ""
+                  return { kind: "text", text: `${id} ${fmt(w.h5)}${cdTxt}` } as Row
+                })
+              return [{ kind: "usage", label, providerID: pid }, ...freeRows, ...modelRows]
+            },
+          }
+        })
+        .sort((a, b) => (priority.get(a.providerID) ?? 99) - (priority.get(b.providerID) ?? 99))
+    }
+    const VIEWS = buildViews()
 
     // Provider the current session is actually using: the provider of the
     // most recent assistant message. Defensive reads; beta API.
