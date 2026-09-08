@@ -1,22 +1,21 @@
 # Changelog
 
-## [0.1.0] - 2026-09-07
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
 
 ### Added
 
-- Sidebar footer widget showing live OpenCode Go plan quota: 5h / 1w / 1mo windows with lean inline progress bars, percent, and reset countdowns.
-- Session-level token and cost totals for the `opencode-go` provider.
-- Zen usage line: session tokens and cost for the `opencode` (Zen) provider, alongside the Go line. The quota windows are workspace-wide; the footer covers both plans' usage explicitly.
-- Free-tier tracking line: `zen free 5h / 1w / 1mo` token totals computed locally from session history (models ending in `-free` plus `big-pickle`). The server exposes no free-quota API, so this is a pace estimate, not the authoritative server counter.
-- Per-model free-tier tracking: free models active in the rolling 5h window are listed individually with token totals; a `⏳` countdown appears once a `FreeUsageLimitError`-style message is found in history (the only server-side signal for per-model free limits).
-- Footer view switch: `/usage-view` (also in the command palette) toggles between **Go** (Go line + quota windows) and **Zen** (Zen line, free-tier totals, per-model 5h usage with cooldown countdowns). Choice persists across TUI restarts.
-- Weekly window matches the server's Monday 00:00 UTC boundary.
-- Quota polling every 60s with staleness indicator (`· stale`) after failed refreshes.
-- Distinct fetch-failure state (`quota ✗`) vs pending state (`quota —`).
-- Durable persistence of last known quota across TUI restarts.
-- `compact` option to show only the tightest window.
-- Graceful no-op when no `opencode-go` or `opencode` API key is configured.
+- Sidebar footer showing live provider quota and usage
+- Per-provider usage tracking (Go plan quota + Zen free-tier breakdown)
+- View picker with provider-key gating and auto-follow
+- Polling fetcher with multi-key fallback
+- 59 tests with 100% line coverage
+- Vite+ developer tooling
+- GitHub Actions CI
+- Pre-commit hooks
 
-### Changed
-
-- Licensed under the GNU Affero General Public License v3.0.
+[Unreleased]: https://github.com/ranjithraj/opencode-usage-quota-tracker/compare/v0.1.0...HEAD

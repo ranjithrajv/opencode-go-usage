@@ -2,43 +2,50 @@
   "name": "opencode-usage-quota-tracker",
   "version": "0.1.0",
   "description": "Live provider quota and usage tracker (tokens, cost, 5h/1w/1mo windows) for OpenCode plans, in the sidebar footer.",
+  "keywords": [
+    "cost",
+    "opencode",
+    "opencode-plugin",
+    "tokens",
+    "usage"
+  ],
   "license": "AGPL-3.0",
   "author": "Ranjith Raj",
+  "files": [
+    "src",
+    "index.ts",
+    "tui.tsx"
+  ],
   "type": "module",
   "main": "./index.ts",
   "exports": {
     ".": "./index.ts",
     "./tui": "./tui.tsx"
   },
-  "files": [
-    "src",
-    "index.ts",
-    "tui.tsx"
-  ],
-  "peerDependencies": {
-    "@opentui/core": "^0.5.10",
-    "@opentui/solid": "^0.5.10",
-    "solid-js": "^1.9.12"
+  "scripts": {
+    "test": "vitest run",
+    "check": "vp check",
+    "check:fix": "vp check --fix",
+    "fmt": "vp fmt",
+    "lint": "vp lint",
+    "typecheck": "vp check --typecheck"
   },
-  "keywords": [
-    "opencode",
-    "opencode-plugin",
-    "usage",
-    "tokens",
-    "cost"
-  ],
   "dependencies": {
     "@opencode-ai/plugin": "beta",
     "opencode-plugin-kit": "file:../opencode-plugin-kit"
   },
   "devDependencies": {
-    "husky": "^9.1.7",
-    "lint-staged": "^17.5.0",
-    "prettier": "^3.9.6",
-    "typescript": "^5.9.3"
+    "@vitest/coverage-v8": "^5.0.0",
+    "happy-dom": "^20.14.0",
+    "typescript": "^5.9.3",
+    "vite-plugin-solid": "^2.11.14",
+    "vite-plus": "^0.1.16",
+    "vitest": "^5.0.0"
   },
-  "scripts": {
-    "prepare": "husky",
-    "typecheck": "tsc --noEmit"
-  }
+  "peerDependencies": {
+    "@opentui/core": "^0.5.10",
+    "@opentui/solid": "^0.5.10",
+    "solid-js": "^1.9.12"
+  },
+  "packageManager": "npm@12.0.2"
 }

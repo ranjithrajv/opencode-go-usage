@@ -1,11 +1,11 @@
 import { Plugin } from "@opencode-ai/plugin/tui"
-import { readFileSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
 import {
-  asArray,
   availableProviders,
+  authKeys,
   bar,
+  createCachedStore,
+  createConnectedProviders,
+  createPollingFetcher,
   createViewPicker,
   fmt,
   fmtCost,
@@ -16,6 +16,8 @@ import {
   providerId,
   providerLabel,
   providerTitle,
+  resolveCurrentModel,
+  sumProviderTokens,
   until,
   unwrap,
   ZEN_PROVIDER,
@@ -48,58 +50,24 @@ interface GoTotals {
   cost: number
 }
 
-function apiKey(): string {
-  try {
-    const auth = JSON.parse(readFileSync(join(homedir(), ".local/share/opencode/auth.json"), "utf8"))
-    return String(auth?.[GO_PROVIDER]?.key ?? "")
-  } catch {
-    return ""
-  }
-}
-
 // The usage endpoint accepts any workspace key. Try the Zen (opencode)
 // provider key first, then fall back to the Go provider key, so the widget
 // also works for users who only have a Zen key.
-function apiKeys(): string[] {
-  try {
-    const auth = JSON.parse(readFileSync(join(homedir(), ".local/share/opencode/auth.json"), "utf8"))
-    const keys = [auth?.[ZEN_PROVIDER]?.key, auth?.[GO_PROVIDER]?.key]
-      .map((k) => String(k ?? "").trim())
-      .filter(Boolean)
-    return keys.length > 0 ? keys : [apiKey()]
-  } catch {
-    return apiKey() ? [apiKey()] : []
-  }
+export function apiKeys(): string[] {
+  return authKeys([ZEN_PROVIDER, GO_PROVIDER])
 }
 
 // Sum tokens/cost across the session's assistant messages that used the
-// given provider (go = opencode-go, zen = opencode). Reads shapes
-// defensively; the plugin API is beta.
-function providerTotals(context: any, providerID: string, sessionID?: string): GoTotals {
-  const totals: GoTotals = { input: 0, output: 0, cost: 0 }
-  if (!sessionID) return totals
-  try {
-    const messages = context.data.session.message.list(sessionID) ?? []
-    for (const entry of messages) {
-      const m = unwrap(entry)
-      if (!isAssistant(m)) continue
-      const provider = providerId(m)
-      if (provider !== providerID) continue
-      const tokens = m?.tokens ?? {}
-      totals.input += Number(tokens?.input ?? 0) || 0
-      totals.output += Number(tokens?.output ?? 0) || 0
-      totals.cost += Number(m?.cost ?? 0) || 0
-    }
-  } catch {
-    // Fall through with whatever was accumulated.
-  }
-  return totals
+// given provider. Delegates to the kit's defensive message walker.
+export function providerTotals(context: any, providerID: string, sessionID?: string): GoTotals {
+  const t = sumProviderTokens(context, sessionID, providerID)
+  return { input: t.input, output: t.output, cost: t.cost }
 }
 
 // Free Zen models: explicit -free suffixes plus the known always-free
 // standbys. The server does not expose free-tier quota, so usage here is a
 // local estimate from message history — useful for pace, not an authority.
-function isFreeModel(id: string): boolean {
+export function isFreeModel(id: string): boolean {
   const m = String(id || "").toLowerCase()
   return m.endsWith("-free") || m === "big-pickle"
 }
@@ -120,10 +88,15 @@ interface FreeModelUsage {
 
 let providerUsageCache: { at: number; value: Record<string, FreeModelUsage> } | null = null
 
+// Test-only: clear the module-level provider usage cache between tests.
+export function __resetProviderUsageCache(): void {
+  providerUsageCache = null
+}
+
 // Extract a retry/cooldown epoch from a limit-error payload. The Zen API is
 // the only place per-model free limits surface; the TUI persists those
 // errors as message parts, so history doubles as our cooldown ledger.
-function parseCooldown(text: string): number | null {
+export function parseCooldown(text: string): number | null {
   if (!text) return null
   const now = Date.now()
   const absolute = text.match(/reset[^.\d]*(\d{4}-\d{2}-\d{2}[\dT .:+-]*Z)/i)
@@ -131,10 +104,12 @@ function parseCooldown(text: string): number | null {
     const ms = Date.parse(absolute[1])
     if (Number.isFinite(ms) && ms > now - 3600_000) return ms
   }
-  const rel = text.match(/retry in (\d+)\s*(minute|hour|day|week)s?/i)
+  const rel = text.match(/retry in (\d+)\s*(\w+)?s?/i)
   if (rel) {
     const mult: Record<string, number> = { minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 604_800_000 }
-    return now + Number(rel[1]) * (mult[String(rel[2]).toLowerCase()] ?? 0)
+    const unit = (rel[2] ?? "").toLowerCase().replace(/s$/, "")
+    const factor = mult[unit]
+    if (factor !== undefined) return now + Number(rel[1]) * factor
   }
   if (/limit (reached|exceeded)|usagelimiterror/i.test(text)) return now + 3600_000 // unknown window: assume ≥1h
   return null
@@ -147,7 +122,7 @@ function parseCooldown(text: string): number | null {
 // cached session; throttled because it is O(sessions × messages). Local
 // estimate only — the server keeps no per-provider quota API outside the
 // go/zen plan endpoint.
-function providerUsage(context: any, providerID: string): FreeModelUsage {
+export function providerUsage(context: any, providerID: string): FreeModelUsage {
   const cached = providerUsageCache?.value[providerID]
   if (providerUsageCache && Date.now() - providerUsageCache.at < 30_000 && cached) return cached
   const totals: FreeWindows = { h5: 0, week: 0, month: 0 }
@@ -193,13 +168,16 @@ function providerUsage(context: any, providerID: string): FreeModelUsage {
         if (!isAssistant(m) || providerId(m) !== providerID) continue
         if (providerID === ZEN_PROVIDER && !isFreeModel(model)) continue
         const tokens = m?.tokens ?? {}
+        const read = tokens?.cache?.read
+        const readTokens = Number(typeof read === "object" ? (read?.input ?? 0) : (read ?? 0)) || 0
         const total =
           (Number(tokens?.input ?? 0) || 0) +
           (Number(tokens?.output ?? 0) || 0) +
           (Number(tokens?.reasoning ?? 0) || 0) +
-          (Number(tokens?.cache?.read?.input ?? 0) || 0)
+          readTokens
         if (total <= 0) continue
-        const ts = Date.parse(m?.time?.created ?? m?.timeCreated ?? m?.createdAt ?? "")
+        const created = m?.time?.created ?? m?.timeCreated ?? m?.createdAt
+        const ts = typeof created === "number" ? created : Date.parse(created ?? "")
         if (!Number.isFinite(ts)) continue
         bump(model, ts, total)
       }
@@ -214,50 +192,38 @@ function providerUsage(context: any, providerID: string): FreeModelUsage {
   return { totals, byModel, cooldowns }
 }
 
-// Plan quota from the same endpoint the console uses. Cached in module
-// scope and persisted to durable storage: the slot render is synchronous, so
-// the latest successful fetch is what gets displayed and a background timer
-// keeps it fresh.
-let cachedUsage: GoUsage | null = null
-let lastFetch = 0
-let lastSuccess = 0
-let inFlight = false
-let persist: ((usage: GoUsage) => void) | null = null
+// Plan quota from the same endpoint the console uses. The fetch/caching
+// closures live in setup() because the durable cache needs the plugin
+// context (see usageCache below).
+type UsageCache = ReturnType<typeof createUsageStore>
+let usageCache: UsageCache
 
-async function fetchUsage(): Promise<void> {
+// Fetch usage, trying each workspace key in order. Returns the parsed
+// usage on success, null to keep the last-known-good cache on failure.
+export async function fetchUsage(): Promise<GoUsage | null> {
   const keys = apiKeys()
-  if (keys.length === 0 || inFlight) return
-  inFlight = true
-  try {
-    for (const key of keys) {
-      try {
-        const res = await fetch(USAGE_URL, { headers: { Authorization: `Bearer ${key}` } })
-        if (res.ok) {
-          // Parse, don't cast: an unrecognized shape degrades to the last
-          // known-good cache instead of poisoning it.
-          const parsed = parseUsage(await res.json())
-          if (parsed) {
-            cachedUsage = parsed
-            lastSuccess = Date.now()
-            lastFetch = lastSuccess
-            persist?.(cachedUsage)
-            return
-          }
-          return
-        }
-      } catch {
-        // Try the next key; keep the last known usage on total failure.
+  if (keys.length === 0) return null
+  for (const key of keys) {
+    try {
+      const res = await fetch(USAGE_URL, { headers: { Authorization: `Bearer ${key}` } })
+      if (res.ok) {
+        // Parse, don't cast: an unrecognized shape degrades to the last
+        // known-good cache instead of poisoning it.
+        const parsed = parseUsage(await res.json())
+        if (parsed) return parsed
       }
+    } catch {
+      // Try the next key; keep the last known usage on total failure.
     }
-  } finally {
-    inFlight = false
   }
+  return null
 }
 
-function refreshUsage(): void {
-  if (Date.now() - lastFetch < POLL_MS) return
-  lastFetch = Date.now() // throttle even when the request fails
-  void fetchUsage()
+// Durable cache: the slot render is synchronous, so the latest successful
+// fetch is what gets displayed and a background timer keeps it fresh —
+// including instantly after a TUI restart, from storage.
+export function createUsageStore(context: any) {
+  return createCachedStore<GoUsage | null>(context, "usage", { initial: null, staleAfterMs: STALE_AFTER_MS })
 }
 
 // ---------------------------------------------------------------------------
@@ -290,20 +256,20 @@ interface TextRow {
 
 type Row = WindowRow | UsageRow | TextRow
 
-function renderUsageRow(context: any, row: UsageRow, sessionID?: string): string {
+export function renderUsageRow(context: any, row: UsageRow, sessionID?: string): string {
   const t = providerTotals(context, row.providerID, sessionID)
   const active = t.input + t.output > 0 || t.cost > 0
   return active ? `${row.label} usage ${fmt(t.input + t.output)} tok · ${fmtCost(t.cost)}` : `${row.label} usage —`
 }
 
-function renderWindowRow(row: WindowRow): string {
+export function renderWindowRow(row: WindowRow): string {
   const value = typeof row.percent === "number" ? `${bar(row.percent)} ${row.percent}%` : row.value
   const line = `${row.label} ${value}${row.warn ? " ⚠" : ""}`
   const eta = until(row.resetsAt)
   return eta ? `${line} · resets ${eta}` : line
 }
 
-function renderRow(context: any, row: Row, sessionID?: string): string {
+export function renderRow(context: any, row: Row, sessionID?: string): string {
   switch (row.kind) {
     case "usage":
       return renderUsageRow(context, row, sessionID)
@@ -320,29 +286,16 @@ function renderRow(context: any, row: Row, sessionID?: string): string {
 export default Plugin.define({
   id: "opencode-go.usage.tui",
   setup(context: any) {
-    // Durable persistence: show the last known quota immediately after a
-    // TUI restart instead of `quota —` until the first poll completes.
-    try {
-      const [store] = context.storage.store("usage", { initial: { usage: null as GoUsage | null, at: 0 } })
-      persist = (usage) => {
-        store.usage = usage
-        store.at = Date.now()
-      }
-      if (!cachedUsage && store.usage) {
-        cachedUsage = store.usage
-        lastSuccess = store.at
-        lastFetch = store.at
-      }
-    } catch {
-      // Storage unavailable; cache stays in-memory only.
-    }
+    usageCache = createUsageStore(context)
 
-    refreshUsage()
-    void refreshConnections()
-    const timer = setInterval(() => {
-      refreshUsage()
-      void refreshConnections()
-    }, POLL_MS)
+    // Polling fetcher: throttles, guards concurrent fetches, and keeps the
+    // last-known-good value on failure. Replaces manual setInterval + flags.
+    const polling = createPollingFetcher({
+      fetch: fetchUsage,
+      intervalMs: POLL_MS,
+      throttleMs: POLL_MS,
+      onResult: (usage) => usageCache.set(usage),
+    })
 
     const compact = context.options?.compact === true
 
@@ -364,52 +317,32 @@ export default Plugin.define({
     // A view is available only when its provider is connected — read from
     // the same source /connect uses: the integration list, where an entry
     // with a non-empty `connections` array means an added key/credential.
-    // Fetched via the client on a timer; until the first fetch lands (or if
-    // the client is unavailable), fall back to reading auth.json directly.
-    let connectedProviders: Set<string> | null = null
-    const connectedFromAuth = (providerID: string): boolean => {
-      try {
-        const auth = JSON.parse(readFileSync(join(homedir(), ".local/share/opencode/auth.json"), "utf8"))
-        return Boolean(String(auth?.[providerID]?.key ?? "").trim())
-      } catch {
-        return false
-      }
-    }
-    // HuggingFace authenticates via HF_TOKEN env, never auth.json or the
-    // integration list — treat it as connected whenever the env var is set.
-    const hasKey = (providerID: string): boolean => {
-      if (providerID === "huggingface" && process.env.HF_TOKEN) return true
-      return connectedProviders ? connectedProviders.has(providerID) : connectedFromAuth(providerID)
-    }
+    // The kit's createConnectedProviders polls the integration list with
+    // auth.json fallback; HuggingFace's HF_TOKEN env is always included.
+    const connected = createConnectedProviders(context, {
+      extra: () => (process.env.HF_TOKEN ? ["huggingface"] : []),
+      pollMs: POLL_MS,
+    })
+    const hasKey = (providerID: string): boolean => connected.has(providerID)
     const availableViews = () => VIEWS.filter((v) => hasKey(v.providerID))
-    async function refreshConnections(): Promise<void> {
-      try {
-        const res = await context.client.integration.list()
-        const items = (Array.isArray(res?.data) ? res.data : []) as Array<{ id?: string; connections?: unknown[] }>
-        const next = new Set<string>()
-        for (const item of items) if ((item.connections?.length ?? 0) > 0 && item.id) next.add(item.id)
-        connectedProviders = next
-      } catch {
-        // Keep the previous set (or the auth.json fallback).
-      }
-    }
 
     // Plan quota rows (shared workspace quota; aggregates all providers).
     // Server-reported percents → bars. Never fetched: distinguish pending
     // from fetch failure. Compact mode keeps only the tightest window.
     const planQuotaRows = (): Row[] => {
       const windows: Array<[string, Window | undefined]> = [
-        ["5h", cachedUsage?.usage?.rolling],
-        ["1w", cachedUsage?.usage?.weekly],
-        ["1mo", cachedUsage?.usage?.monthly],
+        ["5h", usageCache.value?.usage?.rolling],
+        ["1w", usageCache.value?.usage?.weekly],
+        ["1mo", usageCache.value?.usage?.monthly],
       ]
       const known = windows.filter(([, w]) => w && typeof w.percent === "number") as Array<[string, Window]>
       if (known.length === 0) {
-        const failed = lastFetch > 0 && Date.now() - lastFetch >= STALE_AFTER_MS && !inFlight
+        const failed =
+          usageCache.lastSet > 0 && Date.now() - usageCache.lastSet >= STALE_AFTER_MS && !polling.inFlight()
         return [{ kind: "text", text: failed ? "quota ✗ (fetch failed)" : "quota —" }]
       }
       const tightestIdx = known.reduce(
-        (best, [, w], i) => ((w.percent ?? 0) > (known[best][1].percent ?? 0) ? i : best),
+        (best, [, w], i) => ((w.percent as number) > (known[best][1].percent as number) ? i : best),
         0,
       )
       const shown = compact ? [known[tightestIdx]] : known
@@ -421,7 +354,7 @@ export default Plugin.define({
         resetsAt: w.resetsAt,
         warn: !!w.status && w.status !== "ok",
       }))
-      if (Date.now() - lastSuccess > STALE_AFTER_MS) rows.push({ kind: "text", text: "· stale" })
+      if (usageCache.lastSet > 0 && usageCache.stale) rows.push({ kind: "text", text: "· stale" })
       return rows
     }
 
@@ -443,7 +376,7 @@ export default Plugin.define({
               title: providerTitle(pid),
               description: "Go plan usage line and quota windows",
               providerID: pid,
-              rows: (sessionID) => [{ kind: "usage", label, providerID: pid }, ...planQuotaRows()],
+              rows: (_sessionID) => [{ kind: "usage", label, providerID: pid }, ...planQuotaRows()],
             }
           }
           // zen = free-tier breakdown; any other provider = its model usage.
@@ -453,7 +386,7 @@ export default Plugin.define({
             title: providerTitle(pid),
             description: `${providerTitle(pid)} usage and model breakdown`,
             providerID: pid,
-            rows: (sessionID) => {
+            rows: (_sessionID) => {
               const fw = providerUsage(context, pid)
               const wl = (s: string) => (zenLike ? `free ${s}` : s)
               const freeRows: Row[] = [
@@ -481,20 +414,10 @@ export default Plugin.define({
     const VIEWS = buildViews()
 
     // Provider the current session is actually using: the provider of the
-    // most recent assistant message. Defensive reads; beta API.
+    // most recent assistant message. Delegates to the kit's resolver.
     const sessionProvider = (sessionID?: string): string | null => {
-      if (!sessionID) return null
-      try {
-        const messages = context.data.session.message.list(sessionID) ?? []
-        for (let i = messages.length - 1; i >= 0; i--) {
-          const m = (messages[i] as any)?.info ?? messages[i]
-          if (!isAssistant(m)) continue
-          return String(m?.model?.providerID ?? m?.providerID ?? "") || null
-        }
-      } catch {
-        // Fall through.
-      }
-      return null
+      const m = resolveCurrentModel(context, sessionID)
+      return m?.providerID ?? null
     }
 
     // Auto-pick precedence:
@@ -537,8 +460,6 @@ export default Plugin.define({
     const slot = context.ui.slot({
       replace: "sidebar.footer",
       render: ({ sessionID }: { sessionID?: string }) => {
-        refreshUsage()
-
         // No workspace key configured: render nothing instead of dead weight.
         if (apiKeys().length === 0) return null
 
@@ -553,7 +474,8 @@ export default Plugin.define({
     })
 
     return () => {
-      clearInterval(timer)
+      polling.stop()
+      connected.stop()
       slot?.()
     }
   },
