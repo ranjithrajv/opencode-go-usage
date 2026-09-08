@@ -28,7 +28,8 @@
     "check:fix": "vp check --fix",
     "fmt": "vp fmt",
     "lint": "vp lint",
-    "typecheck": "vp check --typecheck"
+    "typecheck": "vp check --typecheck",
+    "test:coverage": "vitest run --coverage.enabled"
   },
   "dependencies": {
     "@opencode-ai/plugin": "beta",

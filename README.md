@@ -68,3 +68,7 @@ Built against the OpenCode V2 plugin API (`@opencode-ai/plugin` `beta`). The plu
 ## License
 
 GNU Affero General Public License v3.0 — see [LICENSE](LICENSE).
+
+## Releases
+
+Changelog entries use [CHANGELOG_TEMPLATE.md](CHANGELOG_TEMPLATE.md): bullets grouped into semantic categories (Added / Changed / Fixed …) that map 1:1 from Conventional Commit types (`feat` → Added, `fix` → Fixed, …). Breaking changes get a `### Breaking` block and a major bump.

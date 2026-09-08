@@ -317,12 +317,10 @@ export default Plugin.define({
     // A view is available only when its provider is connected — read from
     // the same source /connect uses: the integration list, where an entry
     // with a non-empty `connections` array means an added key/credential.
-    // The kit's createConnectedProviders polls the integration list with
-    // auth.json fallback; HuggingFace's HF_TOKEN env is always included.
-    const connected = createConnectedProviders(context, {
-      extra: () => (process.env.HF_TOKEN ? ["huggingface"] : []),
-      pollMs: POLL_MS,
-    })
+    // The kit's createConnectedProviders polls the integration list and
+    // falls back to availableProviders() (auth.json + HF_TOKEN) when the
+    // client is unavailable.
+    const connected = createConnectedProviders(context, { pollMs: POLL_MS })
     const hasKey = (providerID: string): boolean => connected.has(providerID)
     const availableViews = () => VIEWS.filter((v) => hasKey(v.providerID))
 

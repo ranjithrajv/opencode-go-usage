@@ -16,8 +16,8 @@ vi.mock("opencode-plugin-kit", async (importOriginal) => {
   }
 })
 
-const tui = (await import("./tui.tsx")).default as { setup: (ctx: any) => () => void }
-const { __resetProviderUsageCache } = await import("./tui.tsx")
+const tui = (await import("../tui.tsx")).default as { setup: (ctx: any) => () => void }
+const { __resetProviderUsageCache } = await import("../tui.tsx")
 
 const T0 = Date.UTC(2026, 0, 14, 12)
 const FUTURE = new Date(Date.now() + 600_000).toISOString()

@@ -23,7 +23,7 @@ const {
   renderWindowRow,
   renderRow,
   __resetProviderUsageCache,
-} = await import("./tui.tsx")
+} = await import("../tui.tsx")
 
 // Fixed clock: Wednesday 2026-01-14 12:00 UTC.
 const T0 = Date.UTC(2026, 0, 14, 12)

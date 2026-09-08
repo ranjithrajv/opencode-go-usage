@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
-import server from "./src/index.ts"
-import root from "./index.ts"
+import server from "../src/index.ts"
+import root from "../index.ts"
 
 describe("entrypoints", () => {
   it("server entrypoint exposes a no-op setup", () => {
