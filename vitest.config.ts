@@ -10,7 +10,7 @@ import { defineConfig, type Plugin } from "vitest/config"
 function hoistDefaultExports(): Plugin {
   return {
     name: "hoist-default-exports-for-coverage",
-    transform(code, id) {
+    transform(code: string, id: string) {
       if (id.endsWith("src/index.ts") && code.includes("export default ")) {
         return {
           code: code.replace("export default ", "const _default = ") + "\nexport default _default\n",
