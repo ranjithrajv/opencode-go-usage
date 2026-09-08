@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-08
+
 ### Added
 
 - Sidebar footer showing live provider quota and usage
@@ -15,3 +17,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Polling fetcher with multi-key fallback, degrading to the last-known-good cache on parse failure
 
 [Unreleased]: https://github.com/ranjithraj/opencode-usage-quota-tracker/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ranjithraj/opencode-usage-quota-tracker/releases/tag/v0.1.0
