@@ -16,24 +16,23 @@ It only renders into the `sidebar.footer` slot — it never modifies sidebar con
 
 ## Install
 
-Add the plugin to your CLI config (`opencode.json`, e.g. `~/.config/opencode/opencode.json`):
+Published on [npm](https://www.npmjs.com/package/opencode-usage-quota-tracker).
+
+**Automatic (recommended)** — add it to your OpenCode config (`~/.config/opencode/opencode.json`) and it installs on startup:
 
 ```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-usage-quota-tracker"],
-}
+{ "plugins": ["opencode-usage-quota-tracker"] }
 ```
 
-Pin a version or pass options if you like:
+**Manual**:
 
-```jsonc
-{
-  "plugins": ["opencode-usage-quota-tracker@0.1.0"],
-}
+```sh
+npm install opencode-usage-quota-tracker
 ```
 
-Or install per project without any config: copy the folder to `<project>/.opencode/plugins/opencode-usage-quota-tracker/` — it is discovered automatically.
+
+Placement: takes over the **sidebar footer** (replaces the built-in USAGE
+block).
 
 ## Usage
 
