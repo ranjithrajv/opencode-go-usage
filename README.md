@@ -1,6 +1,10 @@
 # opencode-usage-quota-tracker
 
-Track live provider quota and usage in [OpenCode](https://opencode.ai) V2 — currently Zen (`opencode`) and Go (`opencode-go`), extensible to other providers. Shares its sidebar building blocks with [opencode-plugin-kit](../opencode-plugin-kit).
+[![CI](https://github.com/ranjithrajv/opencode-usage-quota-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/ranjithrajv/opencode-usage-quota-tracker/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/opencode-usage-quota-tracker)](https://www.npmjs.com/package/opencode-usage-quota-tracker)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+
+Track live provider quota and usage in [OpenCode](https://opencode.ai) V2 — currently Zen (`opencode`) and Go (`opencode-go`), extensible to other providers. Shares its sidebar building blocks with [opencode-plugin-kit](https://github.com/ranjithrajv/opencode-plugin-kit).
 
 - A **sidebar footer** widget in the TUI shows the current session's token and cost usage, live.
 - Quota rows for the 5h / 1w / 1mo windows of your workspace plan, with lean progress bars and reset countdowns.
@@ -30,6 +34,7 @@ Published on [npm](https://www.npmjs.com/package/opencode-usage-quota-tracker).
 npm install opencode-usage-quota-tracker
 ```
 
+Restart the TUI (or `opencode2 service restart`) after changing the config.
 
 Placement: takes over the **sidebar footer** (replaces the built-in USAGE
 block).
