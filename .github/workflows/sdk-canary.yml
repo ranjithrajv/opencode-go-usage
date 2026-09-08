@@ -1,0 +1,58 @@
+name: SDK canary
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Probe new @opencode-ai/plugin beta against published opencode-usage-quota-tracker
+        id: probe
+        run: |
+          set -e
+          VER=$(npm view @opencode-ai/plugin dist-tags.beta)
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Testing against @opencode-ai/plugin@$VER"
+          mkdir -p /tmp/canary && cd /tmp/canary
+          npm init -y > /dev/null
+          npm install --no-save --legacy-peer-deps "@opencode-ai/plugin@$VER" "opencode-usage-quota-tracker@alpha"
+          bun -e "import('opencode-usage-quota-tracker').then(m => { if (typeof m.default?.setup !== 'function') throw new Error('default export has no setup()') })"
+          echo "canary green"
+
+      - name: Open pin-bump PR
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SDK_VERSION: ${{ steps.probe.outputs.version }}
+        run: |
+          VER="$SDK_VERSION"
+          BR="canary/sdk-bump-$VER"
+          git config user.name "sdk-canary-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout -b "$BR"
+          python3 -c "
+import json, os
+p = 'package.json'
+pkg = json.load(open(p))
+key = 'dependencies' if '@opencode-ai/plugin' in pkg.get('dependencies', {}) else 'peerDependencies'
+pkg[key]['@opencode-ai/plugin'] = os.environ['SDK_VERSION']
+json.dump(pkg, open(p, 'w'), indent=2)
+open(p, 'a').write('
+')
+"
+          git commit -am "chore: bump @opencode-ai/plugin pin to $VER (canary green)" || exit 0
+          git push -u origin "$BR" 2>&1 | tail -1
+          gh pr create --title "chore: bump @opencode-ai/plugin pin to $VER" --body "Nightly SDK canary passed: the published alpha package imports cleanly (setup() present) against @opencode-ai/plugin@$VER." || true
